@@ -1,97 +1,174 @@
-import { Connection } from '@solana/web3.js';
-import { TradeResult } from '../types';
-import { Logger } from '../lib/logger';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { Logger, LogMetadata } from '../lib/logger';
+import { TokenInfo, TradeResult, PerformanceMetrics } from '../types';
+import { DatabaseManager } from '../lib/database';
+import { config } from '../lib/config';
+import { format } from 'date-fns';
+import { getTokenPrice } from '../lib/marketData';
 
 export class PnLMonitor {
   private connection: Connection;
   private logger: Logger;
-  private trades: Map<string, TradeResult[]>;
+  private db: DatabaseManager;
 
-  constructor(connection: Connection) {
+  constructor(connection: Connection, logger: Logger, db: DatabaseManager) {
     this.connection = connection;
-    this.logger = new Logger('PnLMonitor');
-    this.trades = new Map();
+    this.logger = logger;
+    this.db = db;
   }
 
   /**
-   * Track a new trade and calculate its PnL
-   * @param trade Trade result to track
+   * Calculate PnL for a position
    */
-  async trackTrade(trade: TradeResult): Promise<void> {
-    try {
-      const tokenTrades = this.trades.get(trade.token.mint.toString()) || [];
-      tokenTrades.push(trade);
-      this.trades.set(trade.token.mint.toString(), tokenTrades);
-
-      await this.updatePnL(trade);
-      this.logger.info(`Tracked ${trade.action} trade for ${trade.token.symbol}`);
-    } catch (error) {
-      this.logger.error('Error tracking trade:', error);
-      throw error;
-    }
+  private calculatePnL(position: TradeResult, currentPrice: number): number {
+    const entryValue = position.amount * position.price;
+    const currentValue = position.amount * currentPrice;
+    return currentValue - entryValue;
   }
 
   /**
-   * Update PnL for a trade
-   * @param trade Trade to update
+   * Calculate performance metrics
    */
-  private async updatePnL(trade: TradeResult): Promise<void> {
-    try {
-      // TODO: Implement PnL calculation
-      // 1. Get current price
-      // 2. Calculate unrealized PnL
-      // 3. Update trade record
-      
-      this.logger.info(`Updated PnL for ${trade.token.symbol}`);
-    } catch (error) {
-      this.logger.error('Error updating PnL:', error);
-      throw error;
-    }
-  }
+  private async calculatePerformanceMetrics(): Promise<PerformanceMetrics> {
+    const trades = await this.db.getRecentTrades(100); // Get last 100 trades
+    const positions = await this.db.getActivePositions();
+    
+    // Calculate total PnL
+    const totalPnL = trades.reduce((sum, trade) => sum + (trade.realizedPnL || 0), 0);
+    
+    // Calculate win rate
+    const winningTrades = trades.filter(trade => (trade.realizedPnL || 0) > 0);
+    const winRate = trades.length > 0 ? winningTrades.length / trades.length : 0;
+    
+    // Calculate average trade duration
+    const tradeDurations = trades.map(trade => {
+      const entryTime = new Date(trade.timestamp).getTime();
+      const exitTime = trade.exitTimestamp ? new Date(trade.exitTimestamp).getTime() : Date.now();
+      return (exitTime - entryTime) / (1000 * 60 * 60); // Convert to hours
+    });
+    const avgTradeDuration = tradeDurations.length > 0 
+      ? tradeDurations.reduce((sum, duration) => sum + duration, 0) / tradeDurations.length 
+      : 0;
 
-  /**
-   * Get performance metrics for a token
-   * @param tokenMint Token mint address
-   * @returns Promise<{ totalPnL: number; winRate: number }>
-   */
-  async getPerformanceMetrics(tokenMint: string): Promise<{ totalPnL: number; winRate: number }> {
-    try {
-      const tokenTrades = this.trades.get(tokenMint) || [];
-      
-      // TODO: Implement performance metrics calculation
-      // 1. Calculate total PnL
-      // 2. Calculate win rate
-      // 3. Return metrics
-      
-      return {
-        totalPnL: 0,
-        winRate: 0
-      };
-    } catch (error) {
-      this.logger.error('Error getting performance metrics:', error);
-      throw error;
-    }
+    // Calculate best and worst trades
+    const bestTrade = trades.reduce((best, current) => 
+      (current.realizedPnL || 0) > (best.realizedPnL || 0) ? current : best, trades[0] || null);
+    const worstTrade = trades.reduce((worst, current) => 
+      (current.realizedPnL || 0) < (worst.realizedPnL || 0) ? current : worst, trades[0] || null);
+
+    return {
+      totalPnL,
+      winRate,
+      avgTradeDuration,
+      bestTrade: bestTrade || {
+        token: { mint: '', symbol: '', name: '' },
+        action: 'BUY',
+        amount: 0,
+        price: 0,
+        timestamp: new Date().toISOString(),
+        realizedPnL: 0
+      },
+      worstTrade: worstTrade || {
+        token: { mint: '', symbol: '', name: '' },
+        action: 'BUY',
+        amount: 0,
+        price: 0,
+        timestamp: new Date().toISOString(),
+        realizedPnL: 0
+      },
+      recentTrades: trades.slice(0, 10) // Last 10 trades
+    };
   }
 
   /**
    * Generate performance report
-   * @returns Promise<{ totalPnL: number; bestTrade: TradeResult; worstTrade: TradeResult }>
    */
-  async generateReport(): Promise<{ totalPnL: number; bestTrade: TradeResult; worstTrade: TradeResult }> {
+  private async generateReport(metrics: PerformanceMetrics): Promise<string> {
+    const report = [
+      '=== Performance Report ===',
+      `Generated: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}`,
+      '',
+      'Overall Performance:',
+      `Total PnL: ${metrics.totalPnL.toFixed(4)} SOL`,
+      `Win Rate: ${(metrics.winRate * 100).toFixed(2)}%`,
+      `Average Trade Duration: ${metrics.avgTradeDuration.toFixed(2)} hours`,
+      '',
+      'Best Trade:',
+      `Token: ${metrics.bestTrade.token.symbol}`,
+      `PnL: ${metrics.bestTrade.realizedPnL?.toFixed(4)} SOL`,
+      '',
+      'Worst Trade:',
+      `Token: ${metrics.worstTrade.token.symbol}`,
+      `PnL: ${metrics.worstTrade.realizedPnL?.toFixed(4)} SOL`,
+      '',
+      'Recent Trades:',
+      ...metrics.recentTrades.map(trade => 
+        `${trade.token.symbol}: ${trade.action} ${trade.amount} @ ${trade.price} (PnL: ${trade.realizedPnL?.toFixed(4)} SOL)`
+      )
+    ].join('\n');
+
+    return report;
+  }
+
+  /**
+   * Monitor positions and calculate PnL
+   */
+  public async monitor(): Promise<void> {
     try {
-      // TODO: Implement report generation
-      // 1. Aggregate all trades
-      // 2. Calculate overall metrics
-      // 3. Identify best/worst trades
+      const positions = await this.db.getActivePositions();
       
-      return {
-        totalPnL: 0,
-        bestTrade: {} as TradeResult,
-        worstTrade: {} as TradeResult
-      };
-    } catch (error) {
-      this.logger.error('Error generating report:', error);
-      throw error;
+      // Calculate PnL for each position
+      for (const position of positions) {
+        const mint = (position as any).tokenMint || (position as any).token_mint;
+        const symbol = (position as any).symbol || '';
+        const currentPrice = await this.getCurrentPrice(mint);
+        const pnl = this.calculatePnL({
+          token: {
+            mint,
+            symbol,
+            name: '',
+            decimals: 0,
+            supply: 0,
+            createdAt: new Date()
+          },
+          action: 'BUY',
+          amount: (position as any).amount,
+          price: (position as any).entryPrice || (position as any).entry_price,
+          timestamp: typeof (position as any).entryTime === 'string' ? (position as any).entryTime : ((position as any).entry_time ? (typeof (position as any).entry_time === 'string' ? (position as any).entry_time : new Date((position as any).entry_time).toISOString()) : new Date().toISOString())
+        }, currentPrice);
+        
+        // Update position with current PnL
+        await this.db.updatePositionStatus(mint, {
+          ...position,
+          unrealizedPnL: pnl
+        });
+
+        this.logger.info('Position PnL updated', {
+          token: symbol,
+          pnl,
+          currentPrice
+        });
+      }
+
+      // Calculate and save performance metrics
+      const metrics = await this.calculatePerformanceMetrics();
+      await this.db.savePerformanceMetrics(metrics);
+
+      // Generate and log report
+      const report = await this.generateReport(metrics);
+      this.logger.info('Performance report generated', { report });
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error('Error monitoring PnL', { error: error instanceof Error ? error : new Error(errorMessage) });
+      throw error instanceof Error ? error : new Error(errorMessage);
     }
+  }
+
+  /**
+   * Get current price for a token
+   */
+  private async getCurrentPrice(mint: string): Promise<number> {
+    return getTokenPrice(mint);
   }
 } 

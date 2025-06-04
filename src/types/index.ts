@@ -6,12 +6,9 @@ export interface TokenInfo {
   name: string;
   decimals: number;
   supply: number;
-  createdAt: Date;
-  metadata?: TokenMetadata;
-  lpLocked?: boolean;
-  liquidityUSD?: number;
   holders?: number;
   socialScore?: number;
+  createdAt?: Date;
 }
 
 export interface TokenMetadata {
@@ -36,16 +33,24 @@ export interface TradeSignal {
   volume: number;
   score: number;
   suggestedSize: number;
-  riskMetrics: {
-    volatility: number;
-    liquidityDepth: number;
-    marketCap: number;
-  };
-  predictionMetrics: {
-    expectedReturn: number;
-    maxDrawdown: number;
-    sharpeRatio: number;
-  };
+  riskMetrics: RiskMetrics;
+  predictionMetrics: PredictionMetrics;
+}
+
+export interface RiskMetrics {
+  volatility: number;
+  liquidityDepth: number;
+  marketCap: number;
+  priceFeedReliability: number;
+  slippageEstimate: number;
+  walletRisk: number;
+  overallRisk: number;
+}
+
+export interface PredictionMetrics {
+  expectedReturn: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
 }
 
 export interface TradeResult {
@@ -53,41 +58,37 @@ export interface TradeResult {
   action: 'BUY' | 'SELL';
   amount: number;
   price: number;
-  timestamp: Date;
-  txHash: string;
-  pnl?: number;
-  pnlPercentage?: number;
-  fees?: {
-    gas: number;
-    dex: number;
-    total: number;
-  };
-  executionMetrics: {
-    slippage: number;
-    priceImpact: number;
-    executionTime: number;
-  };
-  positionId: string;
-  entryPrice: number;
-  currentPrice?: number;
+  timestamp: string;
+  exitTimestamp?: string;
   unrealizedPnL?: number;
   realizedPnL?: number;
-  holdingTime?: number;
+  executionMetrics?: {
+    slippage: number;
+    gasFees: number;
+    dexFees: number;
+    totalFees: number;
+  };
 }
 
 export interface PerformanceMetrics {
   totalPnL: number;
   winRate: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  averageReturn: number;
-  volatility: number;
-  totalTrades: number;
-  profitableTrades: number;
-  averageHoldingTime: number;
+  avgTradeDuration: number;
   bestTrade: TradeResult;
   worstTrade: TradeResult;
   recentTrades: TradeResult[];
+}
+
+export interface Position {
+  id: string;
+  token: TokenInfo;
+  entryPrice: number;
+  amount: number;
+  entryTime: Date;
+  stopLoss: number;
+  takeProfit: number;
+  unrealizedPnL?: number;
+  realizedPnL?: number;
 }
 
 export interface MarketData {
@@ -96,8 +97,27 @@ export interface MarketData {
   liquidityUSD: number;
   priceChange24h: number;
   lastUpdate: Date;
-  orderBook?: {
-    bids: [number, number][];
-    asks: [number, number][];
-  };
+}
+
+export interface WalletRisk {
+  isScam: boolean;
+  reasons: string[];
+  riskScore: number;
+}
+
+export interface PriceFeedData {
+  price: number;
+  source: 'jupiter' | 'pyth' | 'switchboard';
+  timestamp: number;
+  confidence: number;
+}
+
+export interface ExecutionResult {
+  success: boolean;
+  txHash?: string;
+  error?: string;
+  slippage?: number;
+  gasFees?: number;
+  dexFees?: number;
+  totalFees?: number;
 } 

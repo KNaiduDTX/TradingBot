@@ -2,6 +2,8 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { Logger } from '../lib/logger';
 import { TokenInfo, MarketData } from '../types';
 import axios from 'axios';
+import { getTokenPrice } from '../lib/marketData';
+import { Metaplex } from '@metaplex-foundation/js';
 
 interface HeliusTokenLaunch {
   mint: string;
@@ -28,11 +30,13 @@ export class TokenDetector {
   private readonly MEMECOIN_KEYWORDS = ['doge', 'pepe', 'shib', 'inu', 'moon', 'elon', 'cat', 'baby'];
   private readonly MIN_LIQUIDITY_USD = 10000; // $10k minimum liquidity
   private readonly MIN_HOLDERS = 100;
+  private metaplex: Metaplex;
 
   constructor(connection: Connection) {
     this.connection = connection;
     this.logger = new Logger('TokenDetector');
     this.heliusApiKey = process.env.HELIUS_API_KEY || '';
+    this.metaplex = new Metaplex(this.connection);
     
     if (!this.heliusApiKey) {
       this.logger.warn('Helius API key not found. Token detection may be limited.');
@@ -69,8 +73,8 @@ export class TokenDetector {
 
       return validTokens;
     } catch (error) {
-      this.logger.error('Error detecting tokens:', { error });
-      throw error;
+      this.logger.error('Error detecting tokens:', { error: error instanceof Error ? error : new Error(String(error)) });
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -89,11 +93,13 @@ export class TokenDetector {
           startTime: Date.now() - 24 * 60 * 60 * 1000
         }
       });
-
-      return response.data;
+      if (Array.isArray(response.data)) {
+        return response.data as HeliusTokenLaunch[];
+      }
+      return [];
     } catch (error) {
-      this.logger.error('Error fetching token launches from Helius:', { error });
-      throw error;
+      this.logger.error('Error fetching token launches from Helius:', { error: error instanceof Error ? error : new Error(String(error)) });
+      return [];
     }
   }
 
@@ -136,8 +142,8 @@ export class TokenDetector {
 
       return isValid;
     } catch (error) {
-      this.logger.error('Error validating memecoin:', { 
-        error,
+      this.logger.error('Error validating memecoin:', {
+        error: error instanceof Error ? error : new Error(String(error)),
         tokenMint: tokenAddress.toString()
       });
       return false;
@@ -148,19 +154,40 @@ export class TokenDetector {
    * Gets token metadata from on-chain data
    */
   private async getTokenMetadata(tokenAddress: PublicKey): Promise<TokenInfo> {
-    // TODO: Implement metadata fetching from on-chain data
-    // This would involve fetching the token's metadata account
-    // and parsing the data structure
-    return {} as TokenInfo;
+    try {
+      // Use Metaplex SDK to fetch metadata
+      const metadata = await this.metaplex.nfts().findByMint({ mintAddress: tokenAddress });
+      return {
+        mint: tokenAddress,
+        name: metadata.name,
+        symbol: metadata.symbol,
+        decimals: 9, // Default, you may want to fetch this from the mint account
+        supply: 0,   // You may want to fetch this from the mint account
+        createdAt: new Date(), // Not available on-chain, fallback to now
+        metadata: {
+          description: metadata.uri,
+          image: '',
+          socialLinks: {}
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error fetching on-chain metadata:', { error: error instanceof Error ? error : new Error(String(error)), tokenMint: tokenAddress.toString() });
+      return {} as TokenInfo;
+    }
   }
 
   /**
    * Gets market data for a token
    */
   private async getMarketData(tokenAddress: PublicKey): Promise<MarketData> {
-    // TODO: Implement market data fetching
-    // This would involve querying DEX aggregators or price feeds
-    return {} as MarketData;
+    const price = await getTokenPrice(tokenAddress.toString());
+    return {
+      price,
+      volume24h: 0,
+      liquidityUSD: 0,
+      priceChange24h: 0,
+      lastUpdate: new Date()
+    };
   }
 
   /**

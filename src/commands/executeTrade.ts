@@ -3,6 +3,8 @@ import { TokenInfo, TradeSignal, TradeResult } from '../types';
 import { Logger, LogMetadata } from '../lib/logger';
 import axios from 'axios';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { config } from '../lib/config';
+import bs58 from 'bs58';
 
 interface JupiterRoute {
   inAmount: string;
@@ -199,12 +201,34 @@ export class TradeExecutor {
    * Sign and send transaction
    */
   private async signAndSendTransaction(transaction: Transaction): Promise<string> {
-    // TODO: Implement transaction signing with wallet
-    // This would involve:
-    // 1. Getting the wallet keypair
-    // 2. Signing the transaction
-    // 3. Sending it to the network
-    return 'mock-tx-hash';
+    try {
+      // Get wallet keypair from private key
+      const privateKey = bs58.decode(config.getConfig().walletPrivateKey);
+      const keypair = Keypair.fromSecretKey(privateKey);
+
+      // Sign transaction
+      transaction.sign(keypair);
+
+      // Send transaction
+      const signature = await this.connection.sendRawTransaction(
+        transaction.serialize(),
+        { skipPreflight: false, preflightCommitment: 'confirmed' }
+      );
+
+      // Wait for confirmation
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      if (confirmation.value.err) {
+        throw new TradeError(`Transaction failed: ${confirmation.value.err}`);
+      }
+
+      this.logger.info('Transaction confirmed', { signature });
+      return signature;
+    } catch (error: unknown) {
+      const tradeError = error instanceof Error ? error : new TradeError(String(error));
+      this.logger.error('Error signing and sending transaction', { error: tradeError });
+      throw tradeError;
+    }
   }
 
   /**
@@ -217,10 +241,13 @@ export class TradeExecutor {
     const platformFees = route.marketInfos.reduce((sum, info) => 
       sum + parseFloat(info.platformFee.amount), 0);
 
+    // Estimate gas fees based on transaction size and network conditions
+    const estimatedGas = 0.000005 * (route.marketInfos.length + 1); // Base fee + per hop fee
+
     return {
-      gas: 0, // TODO: Calculate from transaction
+      gas: estimatedGas,
       dex: lpFees + platformFees,
-      total: lpFees + platformFees
+      total: estimatedGas + lpFees + platformFees
     };
   }
 
