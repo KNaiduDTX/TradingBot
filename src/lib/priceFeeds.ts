@@ -1,7 +1,8 @@
-import { Connection, PublicKey } from '@solana/web3.js';
-import { PythClient } from '@pythnetwork/client';
+import { Connection } from '@solana/web3.js';
+import axios from 'axios';
 import { Logger } from './logger';
 import { getTokenPrice } from './marketData';
+import { getPythFeedIdForMint } from './pythMintMapping';
 
 export interface PriceFeedData {
   price: number;
@@ -10,31 +11,36 @@ export interface PriceFeedData {
   confidence: number;
 }
 
+/**
+ * PriceFeedManager provides price data for tokens using Jupiter and Pyth HTTP API as fallback, with caching and robust error handling.
+ */
 export class PriceFeedManager {
   private logger: Logger;
   private connection: Connection;
-  private pythClient: PythClient;
   private readonly PRICE_CACHE_TTL = 60000; // 1 minute
   private priceCache: Map<string, PriceFeedData> = new Map();
+  private readonly PYTH_HTTP_URL = 'https://hermes.pyth.network/v2/price_feed'; // Official Pyth HTTP endpoint
 
+  /**
+   * Create a new PriceFeedManager instance.
+   * @param connection Solana connection (not used for HTTP fallback, but kept for interface compatibility)
+   */
   constructor(connection: Connection) {
     this.logger = new Logger('PriceFeedManager');
     this.connection = connection;
-    this.pythClient = new PythClient(this.connection);
   }
 
   /**
-   * Get price data with fallback to multiple sources
+   * Get price data for a token mint, with fallback and caching.
+   * @param mint Token mint address (Solana)
+   * @returns PriceFeedData
    */
   async getPriceData(mint: string): Promise<PriceFeedData> {
-    // Check cache first
     const cached = this.priceCache.get(mint);
     if (cached && Date.now() - cached.timestamp < this.PRICE_CACHE_TTL) {
       return cached;
     }
-
     try {
-      // Try Jupiter first
       const jupiterPrice = await getTokenPrice(mint);
       const data: PriceFeedData = {
         price: jupiterPrice,
@@ -42,57 +48,60 @@ export class PriceFeedManager {
         timestamp: Date.now(),
         confidence: 0.9
       };
-      
-      // Cache the result
       this.priceCache.set(mint, data);
       return data;
     } catch (error) {
-      this.logger.warn('Jupiter price feed failed, trying Pyth fallback', {
+      this.logger.warn('Jupiter price feed failed, trying Pyth HTTP fallback', {
         error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined,
         mint
       });
-
       try {
-        // Try Pyth fallback
-        const pythPrice = await this.getPythPrice(mint);
+        const pythPrice = await this.getPythPriceHttp(mint);
         const data: PriceFeedData = {
           price: pythPrice.price,
           source: 'pyth',
           timestamp: Date.now(),
           confidence: pythPrice.confidence
         };
-        
-        // Cache the result
         this.priceCache.set(mint, data);
         return data;
-      } catch (error) {
+      } catch (pythError) {
         this.logger.error('All price feeds failed', {
-          error: error instanceof Error ? error : new Error(String(error)),
+          error: pythError instanceof Error ? pythError : new Error(String(pythError)),
+          stack: pythError instanceof Error ? pythError.stack : undefined,
           mint
         });
-        throw error instanceof Error ? error : new Error(String(error));
+        throw pythError instanceof Error ? pythError : new Error(String(pythError));
       }
     }
   }
 
   /**
-   * Get price from Pyth network
+   * Get price from Pyth HTTP API for a token mint.
+   * @param mint Token mint address (Solana)
+   * @returns Price and confidence
+   * @throws Error if mapping or HTTP request fails
    */
-  private async getPythPrice(mint: string): Promise<{ price: number; confidence: number }> {
+  private async getPythPriceHttp(mint: string): Promise<{ price: number; confidence: number }> {
     try {
-      // Get Pyth price account for the token
-      const priceAccount = await this.pythClient.getPriceAccount(new PublicKey(mint));
-      if (!priceAccount) {
-        throw new Error('Pyth price account not found');
+      const pythFeedId = await getPythFeedIdForMint(mint);
+      if (!pythFeedId) {
+        throw new Error(`No Pyth price feed mapping for mint: ${mint}`);
       }
-
+      const url = `${this.PYTH_HTTP_URL}/${pythFeedId}`;
+      const response = await axios.get(url);
+      if (!response.data || !response.data.price) {
+        throw new Error('No price data in Pyth HTTP response');
+      }
       return {
-        price: priceAccount.getPriceNoOlderThan(60), // Price no older than 60 seconds
-        confidence: priceAccount.getConfidenceNoOlderThan(60)
+        price: response.data.price.price,
+        confidence: response.data.price.confidence_interval
       };
     } catch (error) {
-      this.logger.error('Error fetching Pyth price', {
+      this.logger.error('Error fetching Pyth HTTP price', {
         error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined,
         mint
       });
       throw error instanceof Error ? error : new Error(String(error));
@@ -100,7 +109,7 @@ export class PriceFeedManager {
   }
 
   /**
-   * Clear price cache
+   * Clear the price cache.
    */
   clearCache(): void {
     this.priceCache.clear();

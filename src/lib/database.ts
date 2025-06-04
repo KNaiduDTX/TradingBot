@@ -1,6 +1,6 @@
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
-import { TokenInfo, TradeSignal, TradeResult, PerformanceMetrics } from '../types';
+import { TokenInfo, TradeSignal, TradeResult, PerformanceMetrics } from '../types/index';
 import { Logger } from './logger';
 import { config } from './config';
 import path from 'path';
@@ -45,6 +45,9 @@ interface TradeRecord {
   holding_time: number;
 }
 
+/**
+ * DatabaseManager handles all database operations for tokens, trades, positions, and metrics.
+ */
 export class DatabaseManager {
   private static instance: DatabaseManager;
   private db: Database | null = null;
@@ -54,6 +57,9 @@ export class DatabaseManager {
     this.logger = new Logger('DatabaseManager');
   }
 
+  /**
+   * Get the singleton instance of DatabaseManager
+   */
   static getInstance(): DatabaseManager {
     if (!this.instance) {
       this.instance = new DatabaseManager();
@@ -67,7 +73,7 @@ export class DatabaseManager {
   async initialize(): Promise<void> {
     if (this.db) return;
     this.db = await open({
-      filename: 'trading.db',
+      filename: config.getConfig().dbPath,
       driver: sqlite3.Database
     });
     await this.createTables();
@@ -115,21 +121,15 @@ export class DatabaseManager {
     await this.db.run(`
       INSERT OR REPLACE INTO tokens (
         mint, symbol, name, decimals, supply, created_at,
-        metadata, lp_locked, liquidity_usd, holders,
-        social_score, last_updated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       token.mint.toString(),
       token.symbol,
       token.name,
       token.decimals,
       token.supply,
-      token.createdAt.toISOString(),
-      JSON.stringify(token.metadata),
-      token.lpLocked ? 1 : 0,
-      token.liquidityUSD,
-      token.holders,
-      token.socialScore,
+      (token.createdAt ? token.createdAt : new Date()).toISOString(),
       new Date().toISOString()
     ]);
   }
@@ -155,7 +155,7 @@ export class DatabaseManager {
         trade.token.name,
         trade.token.decimals,
         trade.token.supply.toString(),
-        trade.token.createdAt.toISOString(),
+        (trade.token.createdAt ? trade.token.createdAt : new Date()).toISOString(),
         trade.action,
         trade.amount,
         trade.price,
@@ -171,9 +171,11 @@ export class DatabaseManager {
         amount: trade.amount
       });
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error('Error saving trade result', { error: error instanceof Error ? error : new Error(errorMessage) });
-      throw error instanceof Error ? error : new Error(errorMessage);
+      this.logger.error('Error saving trade result', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -194,9 +196,11 @@ export class DatabaseManager {
 
       this.logger.info('Position status updated', { tokenMint });
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error('Error updating position status', { error: error instanceof Error ? error : new Error(errorMessage) });
-      throw error instanceof Error ? error : new Error(errorMessage);
+      this.logger.error('Error updating position status', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 

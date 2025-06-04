@@ -1,10 +1,10 @@
-import { TokenInfo, TradeSignal } from '../types';
+import { TokenInfo, TradeSignal } from '../types/index';
 import { Logger } from '../lib/logger';
 import * as ort from 'onnxruntime-node';
 import axios from 'axios';
 import { getTokenPrice } from '../lib/marketData';
 import { Connection, PublicKey } from '@solana/web3.js';
-import config from '../configs/config';
+import { config } from '../lib/config';
 
 interface ModelInput {
   price: number;
@@ -41,6 +41,9 @@ interface MarketData {
   lastUpdate: Date;
 }
 
+/**
+ * TradeEvaluator evaluates potential trades using an ML model and market data, and computes risk metrics.
+ */
 export class TradeEvaluator {
   private logger: Logger;
   private model: ort.InferenceSession | null = null;
@@ -50,10 +53,11 @@ export class TradeEvaluator {
   private readonly MAX_SLIPPAGE = 0.015; // 1.5%
   private readonly PRICE_CACHE_TTL = 60000; // 1 minute
   private priceCache: Map<string, PriceFeedData> = new Map();
-  private readonly KNOWN_SCAM_WALLETS = new Set<string>(config.scamWallets);
+  private readonly KNOWN_SCAM_WALLETS: Set<string>;
 
   constructor() {
     this.logger = new Logger('TradeEvaluator');
+    this.KNOWN_SCAM_WALLETS = new Set(config.getConfig().scamWallets);
   }
 
   /**
@@ -61,10 +65,13 @@ export class TradeEvaluator {
    */
   async initializeModel(): Promise<void> {
     try {
-      this.model = await ort.InferenceSession.create('models/solana_bot_model.onnx');
+      this.model = await ort.InferenceSession.create(config.getConfig().modelPath);
       this.logger.info('ML model initialized successfully');
     } catch (error) {
-      this.logger.error('Failed to initialize ML model:', { error: error instanceof Error ? error : new Error(String(error)) });
+      this.logger.error('Failed to initialize ML model', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
@@ -72,32 +79,25 @@ export class TradeEvaluator {
   /**
    * Evaluate a potential trade using ML model and market data
    * @param token Token information
-   * @returns Promise<TradeSignal | null> Trade signal if conditions are met
+   * @returns Trade signal if conditions are met, otherwise null
    */
   async evaluateTrade(token: TokenInfo): Promise<TradeSignal | null> {
     try {
       if (!this.model) {
         await this.initializeModel();
       }
-
       // Get market data
       const marketData = await this.getMarketData(token);
-      
       // Prepare model input
       const modelInput = this.prepareModelInput(token, marketData);
-      
       // Run model inference
       const score = await this.runModelInference(modelInput);
-      
       // Calculate risk metrics
       const riskMetrics = await this.calculateRiskMetrics(token, marketData);
-      
       // Check if trade meets criteria
-      if (score >= this.CONFIDENCE_THRESHOLD && 
-          marketData.liquidityUSD >= this.MIN_LIQUIDITY) {
-        
+      const cfg = config.getConfig();
+      if (score >= cfg.confidenceThreshold && marketData.liquidityUSD >= cfg.minLiquidityUSD) {
         const suggestedSize = this.calculatePositionSize(score, riskMetrics, marketData);
-        
         return {
           token,
           action: 'BUY',
@@ -115,18 +115,17 @@ export class TradeEvaluator {
           }
         };
       }
-
       this.logger.debug('Trade evaluation result', {
         tokenMint: token.mint.toString(),
         score,
-        confidence: score >= this.CONFIDENCE_THRESHOLD,
-        liquidity: marketData.liquidityUSD >= this.MIN_LIQUIDITY
+        confidence: score >= cfg.confidenceThreshold,
+        liquidity: marketData.liquidityUSD >= cfg.minLiquidityUSD
       });
-
       return null;
     } catch (error) {
-      this.logger.error('Error evaluating trade:', {
+      this.logger.error('Error evaluating trade', {
         error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined,
         tokenMint: token.mint.toString()
       });
       throw error instanceof Error ? error : new Error(String(error));
@@ -412,13 +411,8 @@ async function fetchPriceFallback(symbol: string): Promise<number> {
   return 0;
 }
 
-// TODO: Implement wallet validation against scam list
-function validateWallet(wallet: string): boolean {
-  return !KNOWN_SCAM_WALLETS.has(wallet);
-}
-
 // TODO: Implement market data fetching from DEX or price feed
 async function fetchMarketData(symbol: string): Promise<MarketData> {
   // Implement market data fetching logic here
-  return { price: 0, volume: 0 };
+  return { price: 0, volume24h: 0, liquidityUSD: 0, priceChange24h: 0, lastUpdate: new Date() };
 } 

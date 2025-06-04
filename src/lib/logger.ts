@@ -1,5 +1,6 @@
 import winston from 'winston';
 import TelegramBot from 'node-telegram-bot-api';
+import { config } from './config';
 
 export interface LogMetadata {
   tokenMint?: string;
@@ -9,24 +10,31 @@ export interface LogMetadata {
   [key: string]: any;
 }
 
+/**
+ * Logger provides structured logging, error reporting, and optional Telegram alerts.
+ */
 export class Logger {
   private logger: winston.Logger;
   private telegramBot?: TelegramBot;
 
+  /**
+   * Create a new Logger instance for a given context.
+   * @param context The context or module name for the logger.
+   */
   constructor(context: string) {
     // Initialize Telegram bot if token is provided
-    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-      this.telegramBot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
+    const cfg = config.getConfig();
+    if (cfg.telegramBotToken && cfg.telegramChatId) {
+      this.telegramBot = new TelegramBot(cfg.telegramBotToken, { polling: false });
     }
-
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL || 'info',
+      level: cfg.logLevel || 'info',
       format: winston.format.combine(
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
         winston.format.json()
       ),
-      defaultMeta: { 
+      defaultMeta: {
         context,
         environment: process.env.NODE_ENV || 'development'
       },
@@ -41,15 +49,15 @@ export class Logger {
             })
           ),
         }),
-        new winston.transports.File({ 
-          filename: 'logs/error.log', 
+        new winston.transports.File({
+          filename: 'logs/error.log',
           level: 'error',
           format: winston.format.combine(
             winston.format.timestamp(),
             winston.format.json()
           )
         }),
-        new winston.transports.File({ 
+        new winston.transports.File({
           filename: 'logs/combined.log',
           format: winston.format.combine(
             winston.format.timestamp(),
@@ -60,67 +68,79 @@ export class Logger {
     });
   }
 
+  /**
+   * Send a Telegram alert for a given log level and message.
+   */
   private async sendTelegramAlert(level: string, message: string, metadata?: LogMetadata): Promise<void> {
-    if (!this.telegramBot || !process.env.TELEGRAM_CHAT_ID) return;
-
+    const cfg = config.getConfig();
+    if (!this.telegramBot || !cfg.telegramChatId) return;
     const alertMessage = `🚨 [${level.toUpperCase()}] ${message}\n${
       metadata ? JSON.stringify(metadata, null, 2) : ''
     }`;
-
     try {
-      await this.telegramBot.sendMessage(process.env.TELEGRAM_CHAT_ID, alertMessage);
+      await this.telegramBot.sendMessage(cfg.telegramChatId, alertMessage);
     } catch (error) {
+      // Only log to console to avoid recursion
+      // eslint-disable-next-line no-console
       console.error('Failed to send Telegram alert:', error);
     }
   }
 
+  /**
+   * Log an info-level message.
+   */
   info(message: string, metadata?: LogMetadata): void {
     this.logger.info(message, metadata);
   }
 
+  /**
+   * Log an error-level message, including stack trace and optional Telegram alert.
+   */
   error(message: string, metadata?: LogMetadata): void {
     const errorMetadata = {
       ...metadata,
-      error: metadata?.error?.message || metadata?.error,
-      stack: metadata?.error?.stack
+      error: metadata?.error instanceof Error ? metadata.error : (metadata?.error ? new Error(String(metadata.error)) : undefined),
+      stack: metadata?.error instanceof Error ? metadata.error.stack : metadata?.stack
     };
-    
     this.logger.error(message, errorMetadata);
-    
-    // Send critical errors to Telegram
     if (metadata?.error || message.toLowerCase().includes('error')) {
       this.sendTelegramAlert('error', message, errorMetadata);
     }
   }
 
+  /**
+   * Log a warning-level message, including optional Telegram alert.
+   */
   warn(message: string, metadata?: LogMetadata): void {
     this.logger.warn(message, metadata);
-    
-    // Send warnings to Telegram
     this.sendTelegramAlert('warning', message, metadata);
   }
 
+  /**
+   * Log a debug-level message.
+   */
   debug(message: string, metadata?: LogMetadata): void {
     this.logger.debug(message, metadata);
   }
 
-  // New method for trade-specific logging
+  /**
+   * Log a trade-specific info message, with optional Telegram alert.
+   */
   trade(message: string, metadata: LogMetadata): void {
     const tradeMetadata = {
       ...metadata,
       type: 'trade',
       timestamp: new Date().toISOString()
     };
-    
     this.logger.info(message, tradeMetadata);
-    
-    // Send trade notifications to Telegram
-    if (process.env.TELEGRAM_NOTIFY_TRADES === 'true') {
+    if (config.getConfig().telegramNotifyTrades) {
       this.sendTelegramAlert('trade', message, tradeMetadata);
     }
   }
 
-  // New method for performance metrics
+  /**
+   * Log a performance metrics update.
+   */
   performance(metrics: LogMetadata): void {
     this.logger.info('Performance Update', {
       ...metrics,

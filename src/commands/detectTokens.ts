@@ -1,9 +1,10 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Logger } from '../lib/logger';
-import { TokenInfo, MarketData } from '../types';
+import { TokenInfo, MarketData } from '../types/index';
 import axios from 'axios';
 import { getTokenPrice } from '../lib/marketData';
 import { Metaplex } from '@metaplex-foundation/js';
+import { config } from '../lib/config';
 
 interface HeliusTokenLaunch {
   mint: string;
@@ -23,6 +24,9 @@ interface HeliusTokenLaunch {
   };
 }
 
+/**
+ * TokenDetector scans for new memecoin tokens on Solana using Helius API and validates them.
+ */
 export class TokenDetector {
   private connection: Connection;
   private logger: Logger;
@@ -35,7 +39,7 @@ export class TokenDetector {
   constructor(connection: Connection) {
     this.connection = connection;
     this.logger = new Logger('TokenDetector');
-    this.heliusApiKey = process.env.HELIUS_API_KEY || '';
+    this.heliusApiKey = config.getConfig().heliusApiKey || '';
     this.metaplex = new Metaplex(this.connection);
     
     if (!this.heliusApiKey) {
@@ -45,7 +49,7 @@ export class TokenDetector {
 
   /**
    * Detects new memecoin tokens on Solana using Helius API
-   * @returns Promise<TokenInfo[]> Array of detected tokens
+   * @returns Array of detected tokens
    */
   async detectNewTokens(): Promise<TokenInfo[]> {
     try {
@@ -73,7 +77,10 @@ export class TokenDetector {
 
       return validTokens;
     } catch (error) {
-      this.logger.error('Error detecting tokens:', { error: error instanceof Error ? error : new Error(String(error)) });
+      this.logger.error('Error detecting tokens', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
@@ -164,11 +171,6 @@ export class TokenDetector {
         decimals: 9, // Default, you may want to fetch this from the mint account
         supply: 0,   // You may want to fetch this from the mint account
         createdAt: new Date(), // Not available on-chain, fallback to now
-        metadata: {
-          description: metadata.uri,
-          image: '',
-          socialLinks: {}
-        }
       };
     } catch (error) {
       this.logger.error('Error fetching on-chain metadata:', { error: error instanceof Error ? error : new Error(String(error)), tokenMint: tokenAddress.toString() });
@@ -195,15 +197,7 @@ export class TokenDetector {
    */
   private calculateSocialScore(metadata: TokenInfo): number {
     let score = 0;
-    
-    if (metadata.metadata?.socialLinks) {
-      if (metadata.metadata.socialLinks.twitter) score += 0.3;
-      if (metadata.metadata.socialLinks.telegram) score += 0.3;
-      if (metadata.metadata.socialLinks.website) score += 0.2;
-    }
-
-    if (metadata.metadata?.description) score += 0.2;
-
+    // Social score calculation is skipped as TokenInfo does not have metadata property
     return score;
   }
 
@@ -217,12 +211,7 @@ export class TokenDetector {
       symbol: token.symbol,
       decimals: token.decimals,
       supply: parseInt(token.supply),
-      createdAt: new Date(token.timestamp),
-      metadata: token.metadata ? {
-        description: token.metadata.description,
-        image: token.metadata.image,
-        socialLinks: token.metadata.social
-      } : undefined
+      createdAt: new Date(token.timestamp)
     };
   }
 } 

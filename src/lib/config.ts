@@ -40,6 +40,7 @@ export interface BotConfig {
   
   // Database
   dbPath: string;
+  scamWallets: string[];
 }
 
 class ConfigManager {
@@ -110,7 +111,8 @@ class ConfigManager {
       confidenceThreshold: Number(process.env.CONFIDENCE_THRESHOLD) || 0.67,
       
       // Database
-      dbPath: process.env.DB_PATH || path.join(__dirname, '../../data/trades.db')
+      dbPath: process.env.DB_PATH || path.join(__dirname, '../../data/trades.db'),
+      scamWallets: process.env.SCAM_WALLETS ? process.env.SCAM_WALLETS.split(',') : [],
     };
   }
 

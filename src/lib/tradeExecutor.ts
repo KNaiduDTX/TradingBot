@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Transaction, sendAndConfirmTransaction, Keypair } from '@solana/web3.js';
 import { Logger } from './logger';
-import { TokenInfo, TradeSignal, TradeResult } from '../types';
+import { TokenInfo, TradeSignal, TradeResult } from '../types/index';
 import { DatabaseManager } from './database';
 import { PriceFeedManager } from './priceFeeds';
 import axios from 'axios';
@@ -42,21 +42,29 @@ export interface ExecutionResult {
   totalFees?: number;
 }
 
+/**
+ * TradeExecutor executes trades on Solana using Jupiter and handles transaction signing, validation, and logging.
+ */
 export class TradeExecutor {
   private logger: Logger;
   private connection: Connection;
   private databaseManager: DatabaseManager;
   private priceFeedManager: PriceFeedManager;
-  private readonly MAX_RETRIES = 3;
-  private readonly MAX_SLIPPAGE = 0.015; // 1.5%
-  private readonly RETRY_DELAY = 1000; // 1 second
-  private readonly JUPITER_API_URL = 'https://quote-api.jup.ag/v6';
+  private readonly MAX_RETRIES: number;
+  private readonly MAX_SLIPPAGE: number;
+  private readonly RETRY_DELAY: number;
+  private readonly JUPITER_API_URL: string;
 
   constructor(connection: Connection) {
     this.logger = new Logger('TradeExecutor');
     this.connection = connection;
-    this.databaseManager = new DatabaseManager();
+    this.databaseManager = DatabaseManager.getInstance();
     this.priceFeedManager = new PriceFeedManager(connection);
+    const cfg = require('./config').config.getConfig();
+    this.MAX_RETRIES = 3;
+    this.MAX_SLIPPAGE = cfg.maxSlippageBps ? cfg.maxSlippageBps / 10000 : 0.015;
+    this.RETRY_DELAY = 1000;
+    this.JUPITER_API_URL = 'https://quote-api.jup.ag/v6';
   }
 
   /**
@@ -76,7 +84,7 @@ export class TradeExecutor {
           params: {
             inputMint: signal.token.mint.toString(),
             outputMint: 'So11111111111111111111111111111111111111112', // SOL
-            amount: signal.amount,
+            amount: signal.suggestedSize,
             slippageBps: Math.floor(this.MAX_SLIPPAGE * 10000)
           }
         });
@@ -119,7 +127,7 @@ export class TradeExecutor {
         const tradeResult: TradeResult = {
           token: signal.token,
           action: signal.action,
-          amount: signal.amount,
+          amount: signal.suggestedSize,
           price: actualPrice,
           timestamp: new Date().toISOString(),
           executionMetrics: {
@@ -145,6 +153,7 @@ export class TradeExecutor {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.logger.warn('Trade execution failed, retrying', {
           error: lastError,
+          stack: lastError.stack,
           retryCount: retryCount + 1
         });
         
@@ -170,7 +179,7 @@ export class TradeExecutor {
         params: {
           inputMint: signal.token.mint.toString(),
           outputMint: 'So11111111111111111111111111111111111111112',
-          amount: signal.amount,
+          amount: signal.suggestedSize,
           slippageBps: Math.floor(this.MAX_SLIPPAGE * 10000)
         }
       });

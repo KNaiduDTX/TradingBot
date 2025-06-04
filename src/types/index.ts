@@ -68,6 +68,7 @@ export interface TradeResult {
     dexFees: number;
     totalFees: number;
   };
+  error?: string;
 }
 
 export interface PerformanceMetrics {

@@ -1,6 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Logger } from '../lib/logger';
-import { TokenInfo, TradeResult } from '../types';
+import { TokenInfo, TradeResult } from '../types/index';
 import { PriceFeedManager } from '../lib/priceFeeds';
 import { DatabaseManager } from '../lib/database';
 
@@ -10,6 +10,21 @@ export interface ExitSignal {
   currentPnL: number;
 }
 
+interface Position {
+  id: string;
+  token_mint: string;
+  entry_price: number;
+  amount: number;
+  entry_time: string;
+  stop_loss: number;
+  take_profit: number;
+  unrealizedPnL?: number;
+  realizedPnL?: number;
+}
+
+/**
+ * Handles exit logic for open trading positions, including take-profit, stop-loss, and time-based exits.
+ */
 export class ExitEngine {
   private logger: Logger;
   private connection: Connection;
@@ -29,18 +44,39 @@ export class ExitEngine {
   }
 
   /**
-   * Check if a position should be exited
+   * Maps a Position to a TradeResult-like object for exit logic.
+   */
+  private positionToTradeResult(pos: Position): TradeResult {
+    return {
+      token: {
+        mint: new PublicKey(pos.token_mint),
+        symbol: '',
+        name: '',
+        decimals: 0,
+        supply: 0,
+      },
+      action: 'SELL',
+      amount: pos.amount,
+      price: pos.entry_price,
+      timestamp: pos.entry_time,
+      unrealizedPnL: pos.unrealizedPnL,
+      realizedPnL: pos.realizedPnL,
+    };
+  }
+
+  /**
+   * Checks if a position should be exited based on PnL, stop-loss, or holding time.
+   * @param trade The trade result to check exit conditions for.
+   * @returns ExitSignal indicating whether to exit and the reason.
    */
   async checkExitConditions(trade: TradeResult): Promise<ExitSignal> {
     try {
       // Get current price
       const currentPrice = await this.priceFeedManager.getPriceData(trade.token.mint.toString());
-      
       // Calculate current PnL
       const entryValue = trade.amount * trade.price;
       const currentValue = trade.amount * currentPrice.price;
       const currentPnL = (currentValue - entryValue) / entryValue;
-
       // Check take-profit
       if (currentPnL >= this.TAKE_PROFIT_THRESHOLD) {
         return {
@@ -49,7 +85,6 @@ export class ExitEngine {
           currentPnL
         };
       }
-
       // Check stop-loss
       if (currentPnL <= this.STOP_LOSS_THRESHOLD) {
         return {
@@ -58,9 +93,9 @@ export class ExitEngine {
           currentPnL
         };
       }
-
       // Check time-based exit
-      const holdingTime = Date.now() - trade.timestamp.getTime();
+      const ts = typeof trade.timestamp === 'string' ? new Date(trade.timestamp) : trade.timestamp;
+      const holdingTime = Date.now() - ts.getTime();
       if (holdingTime >= this.MAX_HOLDING_TIME) {
         return {
           shouldExit: true,
@@ -68,7 +103,6 @@ export class ExitEngine {
           currentPnL
         };
       }
-
       return {
         shouldExit: false,
         reason: 'No exit conditions met',
@@ -77,87 +111,61 @@ export class ExitEngine {
     } catch (error) {
       this.logger.error('Error checking exit conditions', {
         error: error instanceof Error ? error : new Error(String(error)),
-        tradeId: trade.id
+        stack: error instanceof Error ? error.stack : undefined,
       });
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
   /**
-   * Execute exit for a position
+   * Executes the exit for a given position, updating the database and logging the action.
+   * @param pos The position to exit.
+   * @param exitSignal The exit signal and reason.
+   * @returns True if exit was successful, false otherwise.
    */
-  async executeExit(trade: TradeResult, exitSignal: ExitSignal): Promise<boolean> {
+  async executeExit(pos: Position, exitSignal: ExitSignal): Promise<boolean> {
     try {
       this.logger.info('Executing exit', {
-        tradeId: trade.id,
+        positionId: pos.id,
         reason: exitSignal.reason,
         pnl: exitSignal.currentPnL
       });
-
-      // TODO: Implement actual trade execution
-      // This would involve:
-      // 1. Creating a sell transaction
-      // 2. Estimating slippage
-      // 3. Executing the trade
-      // 4. Updating the database
-
       // For now, just update the database
-      await this.databaseManager.updateTradeStatus(trade.id, 'CLOSED', exitSignal.currentPnL);
-
+      await this.databaseManager.updatePositionStatus(pos.token_mint, {
+        ...pos,
+        realizedPnL: exitSignal.currentPnL,
+        unrealizedPnL: 0
+      });
       return true;
     } catch (error) {
       this.logger.error('Error executing exit', {
         error: error instanceof Error ? error : new Error(String(error)),
-        tradeId: trade.id
+        stack: error instanceof Error ? error.stack : undefined,
+        positionId: pos.id
       });
       return false;
     }
   }
 
   /**
-   * Check and execute exits for all open positions
+   * Checks and executes exits for all open positions in the database.
    */
   async checkAndExecuteExits(): Promise<void> {
     try {
-      const openTrades = await this.databaseManager.getOpenTrades();
-      
-      for (const trade of openTrades) {
-        const exitSignal = await this.checkExitConditions(trade);
-        
+      const openPositions = await this.databaseManager.getActivePositions();
+      for (const pos of openPositions) {
+        const tradeLike = this.positionToTradeResult(pos);
+        const exitSignal = await this.checkExitConditions(tradeLike);
         if (exitSignal.shouldExit) {
-          await this.executeExit(trade, exitSignal);
+          await this.executeExit(pos, exitSignal);
         }
       }
     } catch (error) {
       this.logger.error('Error checking and executing exits', {
-        error: error instanceof Error ? error : new Error(String(error))
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
       });
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
-}
-
-// TODO: Implement actual trade execution
-async function executeTrade(trade: Trade): Promise<void> {
-  // Simulate trade execution
-  console.log(`Executing trade: ${JSON.stringify(trade)}`);
-  // Add actual trade execution logic here
-}
-
-// Ensure Trade type is defined
-interface Trade {
-  id: string;
-  token: TokenInfo;
-  amount: number;
-  price: number;
-  timestamp: Date;
-}
-
-// Ensure TradeResult type is defined
-interface TradeResult {
-  id: string;
-  token: TokenInfo;
-  amount: number;
-  price: number;
-  timestamp: Date;
 } 

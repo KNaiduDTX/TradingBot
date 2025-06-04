@@ -1,11 +1,14 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Logger, LogMetadata } from '../lib/logger';
-import { TokenInfo, TradeResult, PerformanceMetrics } from '../types';
+import { TokenInfo, TradeResult, PerformanceMetrics } from '../types/index';
 import { DatabaseManager } from '../lib/database';
 import { config } from '../lib/config';
 import { format } from 'date-fns';
 import { getTokenPrice } from '../lib/marketData';
 
+/**
+ * PnLMonitor monitors open positions, calculates PnL, and generates performance reports.
+ */
 export class PnLMonitor {
   private connection: Connection;
   private logger: Logger;
@@ -159,9 +162,11 @@ export class PnLMonitor {
       this.logger.info('Performance report generated', { report });
 
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error('Error monitoring PnL', { error: error instanceof Error ? error : new Error(errorMessage) });
-      throw error instanceof Error ? error : new Error(errorMessage);
+      this.logger.error('Error monitoring PnL', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 

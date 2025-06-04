@@ -1,0 +1,11 @@
+data/
+notebooks/
+logs/
+*.log
+*.sqlite
+*.db
+*.onnx
+node_modules/
+.DS_Store
+.env
+.env.* 

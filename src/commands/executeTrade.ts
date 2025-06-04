@@ -1,5 +1,5 @@
 import { Connection, PublicKey, Transaction, Keypair } from '@solana/web3.js';
-import { TokenInfo, TradeSignal, TradeResult } from '../types';
+import { TokenInfo, TradeSignal, TradeResult } from '../types/index';
 import { Logger, LogMetadata } from '../lib/logger';
 import axios from 'axios';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
@@ -39,22 +39,28 @@ class TradeError extends Error {
   }
 }
 
+/**
+ * TradeExecutor executes trades on Solana using Jupiter and handles transaction signing, validation, and logging.
+ */
 export class TradeExecutor {
   private connection: Connection;
   private logger: Logger;
   private readonly JUPITER_API_URL = 'https://quote-api.jup.ag/v6';
-  private readonly MAX_SLIPPAGE_BPS = 150; // 1.5%
-  private readonly MIN_LIQUIDITY_USD = 10000; // $10k
+  private readonly MAX_SLIPPAGE_BPS: number;
+  private readonly MIN_LIQUIDITY_USD: number;
 
   constructor(connection: Connection) {
     this.connection = connection;
     this.logger = new Logger('TradeExecutor');
+    const cfg = config.getConfig();
+    this.MAX_SLIPPAGE_BPS = cfg.maxSlippageBps || 150;
+    this.MIN_LIQUIDITY_USD = cfg.minLiquidityUSD || 10000;
   }
 
   /**
    * Execute a trade based on the trade signal
    * @param signal Trade signal to execute
-   * @returns Promise<TradeResult> Result of the trade execution
+   * @returns Result of the trade execution
    */
   async executeTrade(signal: TradeSignal): Promise<TradeResult> {
     try {
@@ -62,53 +68,39 @@ export class TradeExecutor {
         tokenMint: signal.token.mint.toString(),
         amount: signal.suggestedSize
       });
-
-      // Get best route from Jupiter
       const route = await this.getBestRoute(signal);
-      
-      // Validate route
       if (!this.validateRoute(route, signal)) {
         throw new TradeError('Invalid route: slippage or liquidity too high');
       }
-
-      // Execute swap
       const startTime = Date.now();
       const txHash = await this.executeSwap(route, signal);
       const executionTime = Date.now() - startTime;
-
-      // Calculate fees
       const fees = this.calculateFees(route);
-
       const result: TradeResult = {
         token: signal.token,
         action: signal.action,
         amount: parseFloat(route.inAmount) / Math.pow(10, signal.token.decimals),
         price: signal.price,
-        timestamp: new Date(),
-        txHash,
-        fees,
+        timestamp: new Date().toISOString(),
         executionMetrics: {
           slippage: route.priceImpactPct,
-          priceImpact: route.priceImpact,
-          executionTime
-        },
-        positionId: this.generatePositionId(signal),
-        entryPrice: signal.price
+          gasFees: 0, // Placeholder, update as needed
+          dexFees: 0, // Placeholder, update as needed
+          totalFees: 0 // Placeholder, update as needed
+        }
       };
-
       this.logger.trade('Trade executed successfully', {
         tokenMint: signal.token.mint.toString(),
         txHash,
-        amount: result.amount,
-        fees: result.fees
+        amount: result.amount
       });
-
       return result;
     } catch (error: unknown) {
       const tradeError = error instanceof Error ? error : new TradeError(String(error));
       const metadata: LogMetadata = {
         tokenMint: signal.token.mint.toString(),
-        error: tradeError
+        error: tradeError,
+        stack: tradeError.stack
       };
       this.logger.error('Error executing trade', metadata);
       throw tradeError;

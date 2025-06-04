@@ -2,7 +2,7 @@ import { TradingBot } from '../../src/commands/trading';
 import { DatabaseManager } from '../../src/lib/database';
 import { MetricsServer } from '../../src/monitoring/metricsServer';
 import { PublicKey } from '@solana/web3.js';
-import config from '../../configs/config';
+import { config } from '../../src/lib/config';
 
 describe('TradingBot Integration', () => {
   let tradingBot: TradingBot;
@@ -10,9 +10,9 @@ describe('TradingBot Integration', () => {
   let metricsServer: MetricsServer;
 
   beforeAll(async () => {
-    dbManager = new DatabaseManager();
+    dbManager = DatabaseManager.getInstance();
     await dbManager.initialize();
-    metricsServer = new MetricsServer();
+    metricsServer = MetricsServer.getInstance();
     await metricsServer.start();
     tradingBot = new TradingBot(dbManager, metricsServer);
   });

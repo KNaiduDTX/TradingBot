@@ -1,5 +1,8 @@
 import { PublicKey } from '@solana/web3.js';
 
+// DEPRECATED: Use types from src/types/index.ts instead
+// import { TradeSignal, TradeResult, PerformanceMetrics } from './types/index';
+
 export interface TokenInfo {
   mint: PublicKey;
   symbol: string;
@@ -20,44 +23,4 @@ export interface TokenInfo {
   liquidityUSD?: number;
   holders?: number;
   socialScore?: number;
-}
-
-export interface TradeSignal {
-  token: TokenInfo;
-  action: 'BUY' | 'SELL';
-  amount: number;
-  price: number;
-  confidence: number;
-  timestamp: string;
-  metadata?: {
-    source: string;
-    reason: string;
-    riskScore: number;
-  };
-}
-
-export interface TradeResult {
-  token: TokenInfo;
-  action: 'BUY' | 'SELL';
-  amount: number;
-  price: number;
-  timestamp: string;
-  exitTimestamp?: string;
-  unrealizedPnL?: number;
-  realizedPnL?: number;
-  executionMetrics?: {
-    slippage: number;
-    gasFees: number;
-    dexFees: number;
-    totalFees: number;
-  };
-}
-
-export interface PerformanceMetrics {
-  totalPnL: number;
-  winRate: number;
-  avgTradeDuration: number;
-  bestTrade: TradeResult;
-  worstTrade: TradeResult;
-  recentTrades: TradeResult[];
 } 

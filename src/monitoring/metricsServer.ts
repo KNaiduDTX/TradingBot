@@ -45,9 +45,7 @@ export class MetricsServer {
       res.end(await this.registry.metrics());
     });
 
-    this.app.listen(port, () => {
-      console.log(`Metrics server listening on port ${port}`);
-    });
+    this.app.listen(port);
   }
 
   recordTrade(action: string): void {

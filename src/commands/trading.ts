@@ -1,25 +1,34 @@
 import { PublicKey } from '@solana/web3.js';
-import { TradeSignal, TradeResult, TokenInfo } from '../types';
+import { TradeSignal, TradeResult, TokenInfo } from '../types/index';
 import { DatabaseManager } from '../lib/database';
 import { MetricsServer } from '../monitoring/metricsServer';
-import config from '../../configs/config';
+import { config } from '../lib/config';
 import logger from '../../configs/logger';
 
+/**
+ * TradingBot orchestrates trade signal processing, execution, and logging.
+ */
 export class TradingBot {
   constructor(
     private dbManager: DatabaseManager,
     private metricsServer: MetricsServer
   ) {}
 
+  /**
+   * Processes a trade signal, validates it, executes the trade, and logs the result.
+   * @param signal TradeSignal to process
+   * @returns TradeResult
+   */
   async processTradeSignal(signal: TradeSignal): Promise<TradeResult> {
     try {
+      const cfg = config.getConfig();
       // Validate signal
-      if (signal.confidence < config.confidenceThreshold) {
-        throw new Error(`Signal confidence ${signal.confidence} below threshold ${config.confidenceThreshold}`);
+      if (signal.confidence < cfg.confidenceThreshold) {
+        throw new Error(`Signal confidence ${signal.confidence} below threshold ${cfg.confidenceThreshold}`);
       }
 
-      if (signal.riskMetrics.overallRisk > config.maxDrawdown) {
-        throw new Error(`Risk ${signal.riskMetrics.overallRisk} exceeds maximum allowed ${config.maxDrawdown}`);
+      if (signal.riskMetrics && signal.riskMetrics.overallRisk > cfg.maxDrawdown) {
+        throw new Error(`Risk ${signal.riskMetrics.overallRisk} exceeds maximum allowed ${cfg.maxDrawdown}`);
       }
 
       // Execute trade
@@ -30,8 +39,8 @@ export class TradingBot {
         action: signal.action,
       });
 
-      // Log trade
-      if (result.success) {
+      // Log trade if no error
+      if (!result.error) {
         await this.dbManager.logTrade({
           token_mint: signal.token.mint.toString(),
           symbol: signal.token.symbol,
@@ -40,32 +49,36 @@ export class TradingBot {
           price: signal.price,
           action: signal.action,
           timestamp: new Date().toISOString(),
-          tx_hash: result.txHash,
-          slippage: result.slippage,
-          gas_fees: result.gasFees,
-          dex_fees: result.dexFees,
-          total_fees: result.totalFees,
+          // Add more fields as needed from TradeResult
         });
 
-        this.metricsServer.recordTrade({
-          token: signal.token.symbol,
-          action: signal.action,
-          amount: signal.suggestedSize,
-          price: signal.price,
-        });
+        this.metricsServer.recordTrade(signal.action);
       }
 
       return result;
     } catch (error) {
-      logger.error('Error processing trade signal', { error, signal });
-      this.metricsServer.recordError('trade_signal_error', error as Error);
+      logger.error('Error processing trade signal', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined,
+        signal
+      });
+      this.metricsServer.recordError('trade_signal_error');
       return {
-        success: false,
+        token: signal.token,
+        action: signal.action,
+        amount: signal.suggestedSize,
+        price: signal.price,
+        timestamp: new Date().toISOString(),
         error: (error as Error).message,
-      };
+      } as TradeResult;
     }
   }
 
+  /**
+   * Executes a trade. Placeholder for actual trade execution logic.
+   * @param params Trade execution parameters
+   * @returns TradeResult
+   */
   private async executeTrade(params: {
     token: string;
     amount: number;
@@ -76,20 +89,39 @@ export class TradingBot {
       // TODO: Implement actual trade execution logic
       // This is a placeholder that simulates a successful trade
       return {
-        success: true,
-        txHash: 'mock_tx_hash',
-        slippage: 0.001,
-        gasFees: 0.0001,
-        dexFees: 0.002,
-        totalFees: 0.0031,
+        token: {
+          mint: params.token as any,
+          symbol: '',
+          name: '',
+          decimals: 0,
+          supply: 0,
+        },
+        action: params.action,
+        amount: params.amount,
+        price: params.price,
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      logger.error('Error executing trade', { error, params });
-      this.metricsServer.recordError('trade_execution_error', error as Error);
+      logger.error('Error executing trade', {
+        error: error instanceof Error ? error : new Error(String(error)),
+        stack: error instanceof Error ? error.stack : undefined,
+        params
+      });
+      this.metricsServer.recordError('trade_execution_error');
       return {
-        success: false,
+        token: {
+          mint: params.token as any,
+          symbol: '',
+          name: '',
+          decimals: 0,
+          supply: 0,
+        },
+        action: params.action,
+        amount: params.amount,
+        price: params.price,
+        timestamp: new Date().toISOString(),
         error: (error as Error).message,
-      };
+      } as TradeResult;
     }
   }
 } 
