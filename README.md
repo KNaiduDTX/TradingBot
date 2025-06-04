@@ -46,6 +46,10 @@ npm run build
 
 ```
 ├── configs/           # Configuration files
+│   ├── .env          # Environment variables
+│   ├── risk.ts       # Risk management config
+│   ├── trading.ts    # Trading strategy config
+│   └── monitoring.ts # Monitoring and alerts config
 ├── data/             # Database and data files
 ├── dashboard/        # Grafana dashboards
 ├── models/           # ML model artifacts
@@ -58,6 +62,52 @@ npm run build
 ├── tests/           # Test files
 └── docker/          # Docker configuration
 ```
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+The bot requires several environment variables to be set in the `.env` file:
+
+#### Network Configuration
+- `SOLANA_RPC_URL`: Solana RPC endpoint
+- `SOLANA_WS_URL`: Solana WebSocket endpoint
+- `NETWORK`: Network to use (mainnet-beta, testnet, devnet)
+
+#### API Keys
+- `HELIUS_API_KEY`: Helius API key for enhanced RPC
+- `PYTH_API_KEY`: Pyth Network API key
+- `SWITCHBOARD_API_KEY`: Switchboard API key
+
+#### Trading Parameters
+- `MAX_POSITION_SIZE`: Maximum position size in SOL
+- `MIN_LIQUIDITY_USD`: Minimum liquidity in USD
+- `MAX_SLIPPAGE_BPS`: Maximum allowed slippage in basis points
+
+#### Risk Management
+- `MAX_DRAWDOWN`: Maximum allowed drawdown
+- `DAILY_LOSS_LIMIT`: Maximum daily loss limit
+- `STOP_LOSS_PERCENTAGE`: Stop loss percentage
+
+### Configuration Files
+
+#### Risk Management (`configs/risk.ts`)
+- Position limits and sizing
+- Risk thresholds
+- Circuit breakers
+- Market risk parameters
+
+#### Trading Strategy (`configs/trading.ts`)
+- Strategy parameters
+- Entry/exit rules
+- Technical indicators
+- Position sizing rules
+
+#### Monitoring (`configs/monitoring.ts`)
+- Alerting configuration
+- Logging settings
+- Performance metrics
+- Health checks
 
 ## 🚀 Usage
 
@@ -78,55 +128,59 @@ docker-compose up -d
 
 ## 📊 Monitoring
 
-The bot exposes Prometheus metrics on port 9090 by default. Access the Grafana dashboard at `http://localhost:3000` (default credentials: admin/admin).
+### Prometheus Metrics
+- Trade execution metrics
+- Performance metrics
+- System health metrics
+
+### Grafana Dashboards
+- Real-time trading dashboard
+- Performance analytics
+- System monitoring
+
+### Telegram Alerts
+- Trade execution alerts
+- Error notifications
+- Performance alerts
+
+## 🔒 Security
+
+- API keys and secrets management
+- Wallet security
+- Transaction signing security
+- Rate limiting and circuit breakers
 
 ## 🧪 Testing
 
 ```bash
 # Run unit tests
-npm test
+npm run test
 
 # Run integration tests
 npm run test:integration
+
+# Run performance tests
+npm run test:performance
 ```
 
-## 🔧 Configuration
+## 📈 Performance
 
-Key configuration parameters in `configs/config.ts`:
-
-- Network settings (RPC endpoints)
-- Trading parameters (position sizes, thresholds)
-- Risk management settings
-- Monitoring configuration
-- API keys and model settings
-
-## 📈 Performance Metrics
-
-The bot tracks:
-- Total PnL
-- Win rate
-- Average trade duration
-- Best/worst trades
-- System metrics (CPU, memory, etc.)
-
-## 🔐 Security
-
-- API keys stored in environment variables
-- Rate limiting on external API calls
-- Input validation and sanitization
-- Regular security audits
+- Optimized for low latency
+- Efficient memory usage
+- Scalable architecture
+- Real-time data processing
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
+2. Create your feature branch
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
 
 ## 📝 License
 
-MIT License - see LICENSE file for details
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## ⚠️ Disclaimer
 
