@@ -1,10 +1,48 @@
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, Keypair } from '@solana/web3.js';
 import { TokenInfo, TradeSignal, TradeResult } from '../types';
-import { Logger } from '../lib/logger';
+import { Logger, LogMetadata } from '../lib/logger';
+import axios from 'axios';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+
+interface JupiterRoute {
+  inAmount: string;
+  outAmount: string;
+  priceImpactPct: number;
+  marketInfos: Array<{
+    label: string;
+    lpFee: {
+      amount: string;
+      mint: string;
+    };
+    platformFee: {
+      amount: string;
+      mint: string;
+    };
+  }>;
+  amount: string;
+  slippageBps: number;
+  otherAmountThreshold: string;
+  swapMode: string;
+  priceImpact: number;
+}
+
+interface JupiterSwapResponse {
+  swapTransaction: string;
+}
+
+class TradeError extends Error {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message);
+    this.name = 'TradeError';
+  }
+}
 
 export class TradeExecutor {
   private connection: Connection;
   private logger: Logger;
+  private readonly JUPITER_API_URL = 'https://quote-api.jup.ag/v6';
+  private readonly MAX_SLIPPAGE_BPS = 150; // 1.5%
+  private readonly MIN_LIQUIDITY_USD = 10000; // $10k
 
   constructor(connection: Connection) {
     this.connection = connection;
@@ -18,60 +56,215 @@ export class TradeExecutor {
    */
   async executeTrade(signal: TradeSignal): Promise<TradeResult> {
     try {
-      this.logger.info(`Executing ${signal.action} trade for ${signal.token.symbol}`);
+      this.logger.info(`Executing ${signal.action} trade for ${signal.token.symbol}`, {
+        tokenMint: signal.token.mint.toString(),
+        amount: signal.suggestedSize
+      });
 
-      // TODO: Implement trade execution logic
-      // 1. Create transaction
-      // 2. Add necessary instructions
-      // 3. Sign and send transaction
-      // 4. Return trade result
+      // Get best route from Jupiter
+      const route = await this.getBestRoute(signal);
+      
+      // Validate route
+      if (!this.validateRoute(route, signal)) {
+        throw new TradeError('Invalid route: slippage or liquidity too high');
+      }
 
-      // Placeholder implementation
-      return {
+      // Execute swap
+      const startTime = Date.now();
+      const txHash = await this.executeSwap(route, signal);
+      const executionTime = Date.now() - startTime;
+
+      // Calculate fees
+      const fees = this.calculateFees(route);
+
+      const result: TradeResult = {
         token: signal.token,
         action: signal.action,
-        amount: 0,
+        amount: parseFloat(route.inAmount) / Math.pow(10, signal.token.decimals),
         price: signal.price,
         timestamp: new Date(),
-        txHash: '',
+        txHash,
+        fees,
+        executionMetrics: {
+          slippage: route.priceImpactPct,
+          priceImpact: route.priceImpact,
+          executionTime
+        },
+        positionId: this.generatePositionId(signal),
+        entryPrice: signal.price
       };
-    } catch (error) {
-      this.logger.error('Error executing trade:', error);
-      throw error;
+
+      this.logger.trade('Trade executed successfully', {
+        tokenMint: signal.token.mint.toString(),
+        txHash,
+        amount: result.amount,
+        fees: result.fees
+      });
+
+      return result;
+    } catch (error: unknown) {
+      const tradeError = error instanceof Error ? error : new TradeError(String(error));
+      const metadata: LogMetadata = {
+        tokenMint: signal.token.mint.toString(),
+        error: tradeError
+      };
+      this.logger.error('Error executing trade', metadata);
+      throw tradeError;
     }
   }
 
   /**
+   * Get best trading route from Jupiter
+   */
+  private async getBestRoute(signal: TradeSignal): Promise<JupiterRoute> {
+    try {
+      const response = await axios.get<JupiterRoute>(`${this.JUPITER_API_URL}/quote`, {
+        params: {
+          inputMint: 'So11111111111111111111111111111111111111112', // SOL
+          outputMint: signal.token.mint.toString(),
+          amount: Math.floor(signal.suggestedSize * Math.pow(10, 9)), // Convert to lamports
+          slippageBps: this.MAX_SLIPPAGE_BPS
+        }
+      });
+
+      return response.data;
+    } catch (error: unknown) {
+      const tradeError = error instanceof Error ? error : new TradeError(String(error));
+      const metadata: LogMetadata = {
+        tokenMint: signal.token.mint.toString(),
+        error: tradeError,
+        status: error instanceof Error && 'response' in error ? (error as any).response?.status : undefined
+      };
+      this.logger.error('Error getting Jupiter route', metadata);
+      throw tradeError;
+    }
+  }
+
+  /**
+   * Validate route parameters
+   */
+  private validateRoute(route: JupiterRoute, signal: TradeSignal): boolean {
+    // Check slippage
+    if (route.priceImpactPct > this.MAX_SLIPPAGE_BPS / 100) {
+      this.logger.warn('Slippage too high', {
+        priceImpact: route.priceImpactPct,
+        maxAllowed: this.MAX_SLIPPAGE_BPS / 100
+      });
+      return false;
+    }
+
+    // Check liquidity
+    const liquidityUSD = this.estimateLiquidityUSD(route);
+    if (liquidityUSD < this.MIN_LIQUIDITY_USD) {
+      this.logger.warn('Insufficient liquidity', {
+        liquidityUSD,
+        minRequired: this.MIN_LIQUIDITY_USD
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Execute swap transaction
+   */
+  private async executeSwap(route: JupiterRoute, signal: TradeSignal): Promise<string> {
+    try {
+      // Get swap transaction
+      const swapResponse = await axios.post<JupiterSwapResponse>(`${this.JUPITER_API_URL}/swap`, {
+        route,
+        userPublicKey: process.env.WALLET_PUBLIC_KEY,
+        wrapUnwrapSOL: true
+      });
+
+      // Sign and send transaction
+      const transaction = Transaction.from(Buffer.from(swapResponse.data.swapTransaction, 'base64'));
+      const signedTx = await this.signAndSendTransaction(transaction);
+
+      return signedTx;
+    } catch (error: unknown) {
+      const tradeError = error instanceof Error ? error : new TradeError(String(error));
+      const metadata: LogMetadata = {
+        tokenMint: signal.token.mint.toString(),
+        error: tradeError,
+        status: error instanceof Error && 'response' in error ? (error as any).response?.status : undefined
+      };
+      this.logger.error('Error executing swap', metadata);
+      throw tradeError;
+    }
+  }
+
+  /**
+   * Sign and send transaction
+   */
+  private async signAndSendTransaction(transaction: Transaction): Promise<string> {
+    // TODO: Implement transaction signing with wallet
+    // This would involve:
+    // 1. Getting the wallet keypair
+    // 2. Signing the transaction
+    // 3. Sending it to the network
+    return 'mock-tx-hash';
+  }
+
+  /**
+   * Calculate fees from route
+   */
+  private calculateFees(route: JupiterRoute): { gas: number; dex: number; total: number } {
+    const lpFees = route.marketInfos.reduce((sum, info) => 
+      sum + parseFloat(info.lpFee.amount), 0);
+    
+    const platformFees = route.marketInfos.reduce((sum, info) => 
+      sum + parseFloat(info.platformFee.amount), 0);
+
+    return {
+      gas: 0, // TODO: Calculate from transaction
+      dex: lpFees + platformFees,
+      total: lpFees + platformFees
+    };
+  }
+
+  /**
+   * Estimate liquidity in USD
+   */
+  private estimateLiquidityUSD(route: JupiterRoute): number {
+    // Simple estimation based on route amounts
+    return parseFloat(route.outAmount) * 2; // Assuming 50/50 pool
+  }
+
+  /**
+   * Generate unique position ID
+   */
+  private generatePositionId(signal: TradeSignal): string {
+    return `${signal.token.mint.toString()}-${Date.now()}`;
+  }
+
+  /**
    * Calculate optimal trade size based on risk parameters
-   * @param signal Trade signal
-   * @param balance Available balance
-   * @returns number Optimal trade size
    */
   calculateTradeSize(signal: TradeSignal, balance: number): number {
-    // TODO: Implement position sizing logic
-    // 1. Consider risk parameters
-    // 2. Account for slippage
-    // 3. Apply position limits
-    
-    return 0;
+    // Use the suggested size from the trade signal
+    return Math.min(signal.suggestedSize, balance);
   }
 
   /**
    * Validate trade execution conditions
-   * @param signal Trade signal
-   * @returns Promise<boolean> Whether trade can be executed
    */
   async validateTradeConditions(signal: TradeSignal): Promise<boolean> {
     try {
-      // TODO: Implement trade validation
-      // 1. Check liquidity
-      // 2. Verify price impact
-      // 3. Validate market conditions
+      // Get route to check liquidity and slippage
+      const route = await this.getBestRoute(signal);
       
-      return true;
-    } catch (error) {
-      this.logger.error('Error validating trade conditions:', error);
-      throw error;
+      // Validate route parameters
+      return this.validateRoute(route, signal);
+    } catch (error: unknown) {
+      const tradeError = error instanceof Error ? error : new TradeError(String(error));
+      const metadata: LogMetadata = {
+        tokenMint: signal.token.mint.toString(),
+        error: tradeError
+      };
+      this.logger.error('Error validating trade conditions', metadata);
+      return false;
     }
   }
 } 
