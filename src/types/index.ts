@@ -108,7 +108,7 @@ export interface WalletRisk {
 
 export interface PriceFeedData {
   price: number;
-  source: 'jupiter' | 'pyth' | 'switchboard';
+  source: 'jupiter' | 'pyth' | 'switchboard' | 'birdeye';
   timestamp: number;
   confidence: number;
 }

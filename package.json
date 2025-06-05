@@ -16,6 +16,7 @@
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@project-serum/anchor": "^0.26.0",
     "@pythnetwork/client": "^2.22.1",
+    "@pythnetwork/express-relay-js": "^0.29.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.87.6",
     "@types/compression": "^1.8.0",

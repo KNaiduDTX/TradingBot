@@ -5,6 +5,8 @@ import { TradeExecutor } from './commands/executeTrade';
 import { PnLMonitor } from './commands/monitorPnL';
 import { Logger } from './lib/logger';
 import dotenv from 'dotenv';
+import { PythExpressRelay } from './integrations/pythExpressRelay';
+import { DatabaseManager } from './lib/database';
 
 // Load environment variables
 dotenv.config();
@@ -16,20 +18,21 @@ class SolanaMemecoinBot {
   private tradeExecutor: TradeExecutor;
   private pnlMonitor: PnLMonitor;
   private logger: Logger;
+  private relay: PythExpressRelay | null = null;
 
   constructor() {
+    // Initialize logger first
+    this.logger = new Logger('SolanaMemecoinBot');
     // Initialize Solana connection
     this.connection = new Connection(
       process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
       'confirmed'
     );
-
     // Initialize components
     this.tokenDetector = new TokenDetector(this.connection);
     this.tradeEvaluator = new TradeEvaluator();
     this.tradeExecutor = new TradeExecutor(this.connection);
-    this.pnlMonitor = new PnLMonitor(this.connection);
-    this.logger = new Logger('SolanaMemecoinBot');
+    this.pnlMonitor = new PnLMonitor(this.connection, this.logger, DatabaseManager.getInstance());
   }
 
   /**
@@ -42,12 +45,42 @@ class SolanaMemecoinBot {
       // Initialize ML model
       await this.tradeEvaluator.initializeModel();
 
+      // Start Pyth Express Relay integration
+      await this.initRelay();
+
       // Start main trading loop
       await this.tradingLoop();
     } catch (error) {
-      this.logger.error('Error starting bot:', error);
+      this.logger.error('Error starting bot:', { error: error instanceof Error ? error : new Error(String(error)) });
       throw error;
     }
+  }
+
+  /**
+   * Initialize Pyth Express Relay and wire opportunity callback
+   */
+  private async initRelay() {
+    const bidStatusCallback = (status: any) => {
+      this.logger.info('PythExpressRelay Bid Status', { status });
+    };
+
+    const opportunityCallback = async (opportunity: any) => {
+      this.logger.info('PythExpressRelay Opportunity', { opportunity });
+      // TODO: Map opportunity to TokenInfo and run ML evaluation
+      // Example: const tokenInfo = mapOpportunityToTokenInfo(opportunity);
+      // const signal = await this.tradeEvaluator.evaluateTrade(tokenInfo);
+      // if (!signal) return;
+      try {
+        if (this.relay) {
+          await this.relay.generateAndSubmitBid(opportunity);
+          this.logger.info('Bid submitted for opportunity', { opportunityId: opportunity.order_address });
+        }
+      } catch (err) {
+        this.logger.error('Error submitting bid for opportunity', { error: err instanceof Error ? err : new Error(String(err)) });
+      }
+    };
+
+    this.relay = await PythExpressRelay.getInstance(bidStatusCallback, opportunityCallback);
   }
 
   /**
@@ -68,19 +101,18 @@ class SolanaMemecoinBot {
             
             if (canExecute) {
               const result = await this.tradeExecutor.executeTrade(signal);
-              await this.pnlMonitor.trackTrade(result);
+              // No trackTrade method; consider logging or monitoring here if needed
             }
           }
         }
 
-        // Generate performance report
-        const report = await this.pnlMonitor.generateReport();
-        this.logger.info('Performance Report:', report);
+        // Monitor PnL and log performance
+        await this.pnlMonitor.monitor();
 
         // Wait before next iteration
         await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000)); // 5 minutes
       } catch (error) {
-        this.logger.error('Error in trading loop:', error);
+        this.logger.error('Error in trading loop:', { error: error instanceof Error ? error : new Error(String(error)) });
         // Continue running despite errors
       }
     }
