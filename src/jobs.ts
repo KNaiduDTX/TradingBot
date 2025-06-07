@@ -131,12 +131,7 @@ export class TradingBot {
    * Execute a trade
    */
   private async executeTrade(signal: any): Promise<boolean> {
-    // TODO: Implement actual trade execution
-    // This would involve:
-    // 1. Creating and signing the transaction
-    // 2. Sending the transaction
-    // 3. Confirming the transaction
-    // 4. Updating the database
+    // Simulate trade execution (replace with real DEX integration)
     return true;
   }
 }
@@ -166,7 +161,7 @@ export async function startTradingBot(connection: Connection): Promise<void> {
 
 // TODO: Implement actual trade execution
 async function executeTrade(trade: Trade): Promise<void> {
-  // Simulate trade execution
+  // Simulate trade execution (replace with real DEX integration)
   console.log(`Executing trade: ${JSON.stringify(trade)}`);
   // Add actual trade execution logic here
 } 

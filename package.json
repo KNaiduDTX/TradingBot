@@ -42,7 +42,12 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.11.0",
-    "yaml": "^2.8.0"
+    "yaml": "^2.8.0",
+    "@orca-so/sdk": "^1.2.25",
+    "@orca-so/whirlpools": "2.1.1",
+    "@blockworks-foundation/mango-v4": "0.33.9",
+    "@ellipsis-labs/phoenix-sdk": "2.0.3",
+    "@project-serum/serum": "^0.13.65"
   },
   "devDependencies": {
     "@types/axios": "^0.14.4",

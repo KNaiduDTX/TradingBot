@@ -246,8 +246,8 @@ export class TradeEvaluator {
       return cached;
     }
 
+    // Try Jupiter first
     try {
-      // Try Jupiter first
       const jupiterPrice = await getTokenPrice(mint);
       const data: PriceFeedData = {
         price: jupiterPrice,
@@ -255,18 +255,38 @@ export class TradeEvaluator {
         timestamp: Date.now(),
         confidence: 0.9
       };
-      
-      // Cache the result
       this.priceCache.set(mint, data);
       return data;
     } catch (error) {
-      // TODO: Implement Pyth/Switchboard fallback
-      this.logger.warn('Jupiter price feed failed, fallback not implemented', {
-        error: error instanceof Error ? error : new Error(String(error)),
-        mint
-      });
-      throw error instanceof Error ? error : new Error(String(error));
+      this.logger.warn('Jupiter price feed failed, trying Pyth', { error: error instanceof Error ? error : new Error(String(error)), mint });
     }
+    // Try Pyth
+    try {
+      const pythProvider = new (await import('../lib/priceDataProvider')).PythProvider();
+      const pythData = await pythProvider.getCurrentPrice(mint);
+      if (pythData) {
+        const data: PriceFeedData = {
+          price: pythData.price,
+          source: 'pyth',
+          timestamp: Date.now(),
+          confidence: pythData.confidence || 0.95
+        };
+        this.priceCache.set(mint, data);
+        return data;
+      }
+    } catch (error) {
+      this.logger.warn('Pyth price feed failed, trying Switchboard', { error: error instanceof Error ? error : new Error(String(error)), mint });
+    }
+    // Try Switchboard (if implemented)
+    try {
+      // Placeholder: If SwitchboardProvider exists, use it
+      // const switchboardProvider = new SwitchboardProvider();
+      // const switchboardData = await switchboardProvider.getCurrentPrice(mint);
+      // if (switchboardData) { ... }
+    } catch (error) {
+      this.logger.warn('Switchboard price feed failed', { error: error instanceof Error ? error : new Error(String(error)), mint });
+    }
+    throw new Error(`All price feeds failed for mint: ${mint}`);
   }
 
   /**
@@ -295,9 +315,11 @@ export class TradeEvaluator {
    * Calculate wallet risk score
    */
   private async calculateWalletRisk(token: TokenInfo): Promise<number> {
-    // TODO: Implement wallet validation against scam list
-    // For now, return a default risk score
-    return 0.1;
+    // Check if the token mint is in the known scam wallet list
+    if (this.KNOWN_SCAM_WALLETS.has(token.mint.toString())) {
+      return 1.0; // Maximum risk
+    }
+    return 0.1; // Default low risk
   }
 
   /**
@@ -387,9 +409,11 @@ export class TradeEvaluator {
    * Get market data for a token
    */
   private async getMarketData(token: TokenInfo): Promise<MarketData> {
-    // TODO: Implement market data fetching from DEX or price feed
+    // Use getTokenPrice for price, and set other fields to 0 or fetch from DEX if available
+    const price = await getTokenPrice(token.mint.toString());
+    // TODO: Optionally fetch volume24h, liquidityUSD, priceChange24h from DEX APIs
     return {
-      price: 0,
+      price,
       volume24h: 0,
       liquidityUSD: 0,
       priceChange24h: 0,
@@ -407,12 +431,18 @@ export class TradeEvaluator {
 
 // TODO: Implement Pyth/Switchboard fallback
 async function fetchPriceFallback(symbol: string): Promise<number> {
-  // Implement fallback logic here
-  return 0;
+  // Use getTokenPrice as a fallback
+  return getTokenPrice(symbol);
+}
+
+// TODO: Implement wallet validation against scam list
+function validateWalletAgainstScamList(wallet: string): boolean {
+  // Placeholder: Always return true (not a scam)
+  return true;
 }
 
 // TODO: Implement market data fetching from DEX or price feed
-async function fetchMarketData(symbol: string): Promise<MarketData> {
-  // Implement market data fetching logic here
-  return { price: 0, volume24h: 0, liquidityUSD: 0, priceChange24h: 0, lastUpdate: new Date() };
+async function fetchMarketDataFromDEXorFeed(token: string): Promise<number> {
+  // Use getTokenPrice as a fallback
+  return getTokenPrice(token);
 } 

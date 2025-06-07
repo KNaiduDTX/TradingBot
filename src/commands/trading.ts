@@ -86,8 +86,7 @@ export class TradingBot {
     action: 'BUY' | 'SELL';
   }): Promise<TradeResult> {
     try {
-      // TODO: Implement actual trade execution logic
-      // This is a placeholder that simulates a successful trade
+      // Simulate trade execution (replace with real DEX integration)
       return {
         token: {
           mint: params.token as any,

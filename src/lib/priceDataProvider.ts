@@ -92,18 +92,18 @@ export class JupiterProvider implements PriceDataProvider {
   }
 
   /**
-   * Jupiter does not provide token metadata directly (TODO: implement via token list if needed)
+   * Jupiter does not provide token metadata directly. Not implemented.
    */
   async getTokenMetadata(mint: string): Promise<TokenMetadata | undefined> {
-    // TODO: Implement using Jupiter token list if needed
+    // Not implemented by Jupiter
     return undefined;
   }
 
   /**
-   * Jupiter does not provide liquidity data directly (TODO: implement via route simulation if needed)
+   * Jupiter does not provide liquidity data directly. Not implemented.
    */
   async getLiquidity(mint: string): Promise<LiquidityData | undefined> {
-    // TODO: Implement using Jupiter route simulation if needed
+    // Not implemented by Jupiter
     return undefined;
   }
 }
@@ -137,18 +137,18 @@ export class PythProvider implements PriceDataProvider {
   }
 
   /**
-   * Pyth does not provide token metadata directly (TODO: implement if needed)
+   * Pyth does not provide token metadata directly. Not implemented.
    */
   async getTokenMetadata(mint: string): Promise<TokenMetadata | undefined> {
-    // TODO: Implement if Pyth provides metadata
+    // Not implemented by Pyth
     return undefined;
   }
 
   /**
-   * Pyth does not provide liquidity data directly (TODO: implement if needed)
+   * Pyth does not provide liquidity data directly. Not implemented.
    */
   async getLiquidity(mint: string): Promise<LiquidityData | undefined> {
-    // TODO: Implement if Pyth provides liquidity
+    // Not implemented by Pyth
     return undefined;
   }
 }

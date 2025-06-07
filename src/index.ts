@@ -1,4 +1,4 @@
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 import { TokenDetector } from './commands/detectTokens';
 import { TradeEvaluator } from './commands/evaluateTrade';
 import { TradeExecutor } from './commands/executeTrade';
@@ -7,6 +7,7 @@ import { Logger } from './lib/logger';
 import dotenv from 'dotenv';
 import { PythExpressRelay } from './integrations/pythExpressRelay';
 import { DatabaseManager } from './lib/database';
+import { TokenInfo } from './types/index';
 
 // Load environment variables
 dotenv.config();
@@ -57,6 +58,23 @@ class SolanaMemecoinBot {
   }
 
   /**
+   * Map a Pyth Express Relay opportunity to TokenInfo
+   */
+  private mapOpportunityToTokenInfo(opportunity: any): TokenInfo {
+    // This mapping may need to be adjusted based on the actual opportunity structure
+    return {
+      mint: new PublicKey(opportunity.order_address),
+      symbol: opportunity.symbol || 'UNKNOWN',
+      name: opportunity.name || 'Pyth Opportunity',
+      decimals: opportunity.decimals || 9,
+      supply: opportunity.supply || 0,
+      holders: opportunity.holders || 0,
+      socialScore: opportunity.socialScore || 0,
+      createdAt: new Date(),
+    };
+  }
+
+  /**
    * Initialize Pyth Express Relay and wire opportunity callback
    */
   private async initRelay() {
@@ -66,17 +84,22 @@ class SolanaMemecoinBot {
 
     const opportunityCallback = async (opportunity: any) => {
       this.logger.info('PythExpressRelay Opportunity', { opportunity });
-      // TODO: Map opportunity to TokenInfo and run ML evaluation
-      // Example: const tokenInfo = mapOpportunityToTokenInfo(opportunity);
-      // const signal = await this.tradeEvaluator.evaluateTrade(tokenInfo);
-      // if (!signal) return;
       try {
+        // 1. Map opportunity to TokenInfo
+        const tokenInfo = this.mapOpportunityToTokenInfo(opportunity);
+        // 2. Use ML model to decide whether to bid
+        const signal = await this.tradeEvaluator.evaluateTrade(tokenInfo);
+        if (!signal) {
+          this.logger.info('Opportunity did not pass ML evaluation, skipping bid.', { opportunityId: opportunity.order_address });
+          return;
+        }
+        // 3. Submit bid if ML model returns a signal
         if (this.relay) {
           await this.relay.generateAndSubmitBid(opportunity);
           this.logger.info('Bid submitted for opportunity', { opportunityId: opportunity.order_address });
         }
       } catch (err) {
-        this.logger.error('Error submitting bid for opportunity', { error: err instanceof Error ? err : new Error(String(err)) });
+        this.logger.error('Error processing opportunity for bid', { error: err instanceof Error ? err : new Error(String(err)) });
       }
     };
 
